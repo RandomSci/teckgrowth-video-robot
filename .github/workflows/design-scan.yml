@@ -1,0 +1,31 @@
+name: design-scan
+# One idea's best websites, scanned with REA and our design measurement (scripts/design-scan.mjs).
+# The builder dispatches it with the addresses its research found. Results go to a release, design-scan-<job>.
+on:
+  workflow_dispatch:
+    inputs:
+      urls: { description: 'comma list of up to 5 site addresses', required: true }
+      job: { description: 'the builder job id', required: false, default: 'manual' }
+  repository_dispatch:
+    types: [design-scan]
+permissions:
+  contents: write
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      URLS: ${{ inputs.urls || github.event.client_payload.urls }}
+      JOB: ${{ inputs.job || github.event.client_payload.job || 'manual' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 24 }
+      - uses: actions/cache@v4
+        with: { path: ~/.cache/ms-playwright, key: pw-${{ hashFiles('package.json') }} }
+      - run: npm install --no-audit --no-fund
+      - run: npx playwright install --with-deps chromium
+      - run: node scripts/design-scan.mjs "$URLS" scan
+      - run: tar czf scan.tar.gz scan && ls -la scan
+      - env: { GH_TOKEN: '${{ github.token }}' }
+        run: gh release create "design-scan-$JOB-${{ github.run_id }}" scan.tar.gz --title "design scan $JOB" --notes "$URLS"
