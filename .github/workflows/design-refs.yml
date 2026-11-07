@@ -1,0 +1,24 @@
+name: design-refs
+# Measures award winning sites per kind of site for TeckGrowth's builder (scripts/design-refs.mjs). Results go to a
+# release, design-refs-<run>, as refs.tar.gz (JSON per kind plus screenshots).
+on:
+  workflow_dispatch:
+    inputs:
+      kinds: { description: 'comma list, empty for all', required: false, default: '' }
+      per: { description: 'sites per kind', required: false, default: '6' }
+permissions:
+  contents: write
+jobs:
+  refs:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - run: npm install --no-audit --no-fund
+      - run: npx playwright install --with-deps chromium
+      - run: node scripts/design-refs.mjs "${{ inputs.kinds }}" "${{ inputs.per }}"
+      - run: tar czf refs.tar.gz refs && ls -la refs
+      - env: { GH_TOKEN: '${{ github.token }}' }
+        run: gh release create "design-refs-${{ github.run_id }}" refs.tar.gz --title "design refs ${{ github.run_id }}" --notes "kinds ${{ inputs.kinds }} per ${{ inputs.per }}"
