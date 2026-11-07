@@ -22,7 +22,9 @@ jobs:
       - uses: actions/setup-node@v4
         with: { node-version: 24 }
       - uses: actions/cache@v4
-        with: { path: ~/.cache/ms-playwright, key: pw-${{ hashFiles('package.json') }} }
+        with:
+          path: ~/.cache/ms-playwright
+          key: pw-${{ hashFiles('package.json') }}
       - run: npm install --no-audit --no-fund
       - run: npx playwright install --with-deps chromium
       - run: node scripts/design-scan.mjs "$URLS" scan
