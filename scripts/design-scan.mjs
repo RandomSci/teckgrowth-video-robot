@@ -22,12 +22,15 @@ const ctx = await b.newContext({ viewport: { width: 1440, height: 900 }, userAge
 async function awwwards(q, n = 3) {
   const p = await ctx.newPage(), found = [];
   try {
-    await p.goto('https://www.awwwards.com/websites/?text=' + encodeURIComponent(q), { waitUntil: 'domcontentloaded', timeout: 45000 });
     let links = [];
-    for (let t = 0; t < 4 && !links.length; t++) {
+    for (const u of ['https://www.awwwards.com/websites/?text=', 'https://www.awwwards.com/websites/search/?text=']) {
+      if (links.length) break;
+      await p.goto(u + encodeURIComponent(q), { waitUntil: 'commit', timeout: 60000 }).catch((e) => console.log('  goto', e.message.slice(0, 80)));
+    for (let t = 0; t < 5 && !links.length; t++) {
       await p.waitForTimeout(3000);
       try { await p.waitForLoadState('networkidle', { timeout: 15000 }); } catch {}
       links = await p.evaluate(() => [...new Set([...document.querySelectorAll('a[href^="/sites/"]')].map((a) => a.getAttribute('href').split('#')[0]))]).catch(() => []);
+    }
     }
     console.log('awwwards', q, links.length, 'results');
     for (const l of links.slice(0, 8)) {
