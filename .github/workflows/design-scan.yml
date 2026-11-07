@@ -4,7 +4,8 @@ name: design-scan
 on:
   workflow_dispatch:
     inputs:
-      urls: { description: 'comma list of up to 5 site addresses', required: true }
+      urls: { description: 'comma list of up to 5 site addresses', required: false, default: '' }
+      query: { description: 'the idea in a few words, searched on Awwwards first', required: false, default: '' }
       job: { description: 'the builder job id', required: false, default: 'manual' }
   repository_dispatch:
     types: [design-scan]
@@ -17,6 +18,7 @@ jobs:
     env:
       URLS: ${{ inputs.urls || github.event.client_payload.urls }}
       JOB: ${{ inputs.job || github.event.client_payload.job || 'manual' }}
+      QUERY: ${{ inputs.query || github.event.client_payload.query }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -27,7 +29,7 @@ jobs:
           key: pw-${{ hashFiles('package.json') }}
       - run: npm install --no-audit --no-fund
       - run: npx playwright install --with-deps chromium
-      - run: node scripts/design-scan.mjs "$URLS" scan
+      - run: node scripts/design-scan.mjs "$URLS" scan "$QUERY"
       - run: tar czf scan.tar.gz scan && ls -la scan
       - env: { GH_TOKEN: '${{ github.token }}' }
         run: gh release create "design-scan-$JOB-${{ github.run_id }}" scan.tar.gz --title "design scan $JOB" --notes "$URLS"

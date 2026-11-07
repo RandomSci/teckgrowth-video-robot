@@ -10,12 +10,38 @@ import { execFileSync } from 'node:child_process';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { MEASURE } from './measure.mjs';
 
-const urls = (process.argv[2] || '').split(',').map((s) => s.trim()).filter((u) => /^https?:\/\//.test(u)).slice(0, 5);
+let urls = (process.argv[2] || '').split(',').map((s) => s.trim()).filter((u) => /^https?:\/\//.test(u)).slice(0, 5);
 const out = process.argv[3] || 'scan';
+const query = process.argv[4] || '';   // the idea in a few words, searched on Awwwards first
 mkdirSync(out, { recursive: true });
 const PORT = 9222;
 const b = await chromium.launch({ args: ['--remote-debugging-port=' + PORT, '--use-gl=angle', '--use-angle=swiftshader'] });
 const ctx = await b.newContext({ viewport: { width: 1440, height: 900 }, userAgent: 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0 Safari/537.36' });
+
+// Awwwards search for the idea, the award winning sites closest to it, then their live addresses
+async function awwwards(q, n = 3) {
+  const p = await ctx.newPage(), found = [];
+  try {
+    await p.goto('https://www.awwwards.com/websites/?text=' + encodeURIComponent(q), { waitUntil: 'domcontentloaded', timeout: 45000 });
+    let links = [];
+    for (let t = 0; t < 4 && !links.length; t++) {
+      await p.waitForTimeout(3000);
+      try { await p.waitForLoadState('networkidle', { timeout: 15000 }); } catch {}
+      links = await p.evaluate(() => [...new Set([...document.querySelectorAll('a[href^="/sites/"]')].map((a) => a.getAttribute('href').split('#')[0]))]).catch(() => []);
+    }
+    console.log('awwwards', q, links.length, 'results');
+    for (const l of links.slice(0, 8)) {
+      if (found.length >= n) break;
+      await p.goto('https://www.awwwards.com' + l, { waitUntil: 'domcontentloaded', timeout: 45000 }).catch(() => {});
+      await p.waitForTimeout(1500);
+      const u = await p.evaluate(() => { const a = [...document.querySelectorAll('a[href^="http"]')].find((x) => /visit/i.test(x.textContent) && !/awwwards\.com/.test(x.href)); return a ? a.href : null; }).catch(() => null);
+      if (u) { found.push(u.replace(/[?#].*$/, '')); console.log('  award site', u); }
+    }
+  } catch (e) { console.log('awwwards failed', e.message); }
+  await p.close();
+  return found;
+}
+if (query) urls = [...new Set([...(await awwwards(query)), ...urls])].slice(0, 5);
 
 // REA's passive page capture, reduced to what says something about the design
 function rea(url) {
