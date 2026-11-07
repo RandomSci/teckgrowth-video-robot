@@ -29,6 +29,15 @@ jobs:
       ATLAS_API_KEY: ${{ secrets.ATLAS_API_KEY }}
       TG_CALLBACK_TOKEN: ${{ secrets.TG_CALLBACK_TOKEN }}
     steps:
+      - name: Job tokens
+        # TeckGrowth admin sends a short lived token per job in the dispatch payload (robot sign in and callback,
+        # valid about an hour, scoped to this job), masked here so no log ever shows it. Repo secrets stay as a fallback.
+        env:
+          P_ROBOT: ${{ github.event.client_payload.robot_token }}
+          P_CB: ${{ github.event.client_payload.callback_token }}
+        run: |
+          if [ -n "$P_ROBOT" ]; then echo "::add-mask::$P_ROBOT"; echo "ROBOT_TOKEN=$P_ROBOT" >> "$GITHUB_ENV"; fi
+          if [ -n "$P_CB" ]; then echo "::add-mask::$P_CB"; echo "TG_CALLBACK_TOKEN=$P_CB" >> "$GITHUB_ENV"; fi
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
