@@ -92,11 +92,12 @@ const MEASURE = () => {
   }
   const top = (m, n) => [...m.entries()].sort((a, z) => z[1] - a[1]).slice(0, n);
   const total = [...bg.values()].reduce((a, v) => a + v, 0) || 1;
-  const h1 = document.querySelector('h1'), h2 = document.querySelector('h2'), p = document.querySelector('main p, p');
+  const display = [...document.querySelectorAll('h1,h2,h3,p,span,div,a')].filter((e) => vis(e) && [...e.childNodes].some((n) => n.nodeType === 3 && n.textContent.trim().length > 2)).sort((a, z) => parseFloat(getComputedStyle(z).fontSize) - parseFloat(getComputedStyle(a).fontSize))[0];
+  const h1 = display || document.querySelector('h1'), h2 = document.querySelector('h2'), p = document.querySelector('main p, p');
   const font = (el) => el ? { family: getComputedStyle(el).fontFamily.split(',')[0].replace(/["']/g, '').trim(), size: parseFloat(getComputedStyle(el).fontSize), weight: getComputedStyle(el).fontWeight, line: getComputedStyle(el).lineHeight, tracking: getComputedStyle(el).letterSpacing, upper: getComputedStyle(el).textTransform === 'uppercase' } : null;
   const root = document.querySelector('main') || document.body;
   let blocks = [...root.children].filter((c) => vis(c) && c.getBoundingClientRect().height >= 250);
-  if (blocks.length <= 2) { const big = blocks.sort((a, z) => z.getBoundingClientRect().height - a.getBoundingClientRect().height)[0]; if (big) blocks = [...big.children].filter((c) => vis(c) && c.getBoundingClientRect().height >= 250); }
+  for (let depth = 0; depth < 4 && blocks.length <= 2; depth++) { const big = blocks.sort((a, z) => z.getBoundingClientRect().height - a.getBoundingClientRect().height)[0]; if (!big) break; const next = [...big.children].filter((c) => vis(c) && c.getBoundingClientRect().height >= 250); if (!next.length) break; blocks = next; }
   const nav = document.querySelector('header nav, nav, header');
   const navLinks = nav ? [...nav.querySelectorAll('a')].filter(vis).length : 0;
   const dropdown = !!document.querySelector('nav li ul, nav [aria-haspopup], nav [aria-expanded], header [aria-haspopup], header [aria-expanded]');
