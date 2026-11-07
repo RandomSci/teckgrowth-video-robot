@@ -1,0 +1,59 @@
+name: Render a video
+
+# Started by TeckGrowth admin (repository_dispatch, event type render) or by hand (Actions, Render a video, Run workflow).
+# The job is JSON, see README.md. Runs on GitHub's free runner for public repos, never on anyone's computer.
+on:
+  workflow_dispatch:
+    inputs:
+      job:
+        description: 'Job JSON, see README'
+        required: true
+        default: '{"id":"manual-test","title":"Create anything you can imagine","cta":"teckgrowth.com","scenes":[{"url":"https://teckgrowth.com/","caption":"Type one sentence"},{"url":"https://teckgrowth.com/library","caption":"Or start from a finished app","scroll":600}]}'
+  repository_dispatch:
+    types: [render]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: render
+  cancel-in-progress: false
+
+jobs:
+  render:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      JOB: ${{ github.event_name == 'repository_dispatch' && toJSON(github.event.client_payload.job) || inputs.job }}
+      RECORDER_TOKEN: ${{ secrets.RECORDER_TOKEN }}
+      TG_CALLBACK_TOKEN: ${{ secrets.TG_CALLBACK_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm install --no-audit --no-fund
+      - run: npx playwright install --with-deps chromium
+      - name: Capture the screens
+        run: npm run capture
+      - name: Render with Remotion
+        run: npm run render
+      - name: Publish the video
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          ID=$(node -e "console.log(JSON.parse(require('fs').readFileSync('public/shots/scenes.json','utf8')).id.replace(/[^a-z0-9-]/gi,'-'))")
+          TAG="v-${ID}-${GITHUB_RUN_ID}"
+          gh release create "$TAG" out/*.mp4 --title "$ID" --notes "Rendered by run ${GITHUB_RUN_ID}"
+          URL="https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}/${ID}.mp4"
+          echo "video_url=$URL" >> "$GITHUB_OUTPUT"
+          echo "### Video ready" >> "$GITHUB_STEP_SUMMARY"
+          echo "$URL" >> "$GITHUB_STEP_SUMMARY"
+      - name: Tell TeckGrowth
+        if: ${{ env.TG_CALLBACK_TOKEN != '' }}
+        run: |
+          ID=$(node -e "console.log(JSON.parse(require('fs').readFileSync('public/shots/scenes.json','utf8')).id.replace(/[^a-z0-9-]/gi,'-'))")
+          URL="https://github.com/${GITHUB_REPOSITORY}/releases/download/v-${ID}-${GITHUB_RUN_ID}/${ID}.mp4"
+          curl -fsS -X POST https://teckgrowth.com/api/agent/video -H "Authorization: Bearer ${TG_CALLBACK_TOKEN}" -H 'content-type: application/json' \
+            -d "{\"id\":\"${ID}\",\"url\":\"${URL}\",\"run\":\"${GITHUB_RUN_ID}\"}" > /dev/null || echo "callback not ready yet"
