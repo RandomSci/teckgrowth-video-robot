@@ -48,6 +48,11 @@ for (const [i, url] of urls.entries()) {
   try {
     await p.goto(url, { waitUntil: 'load', timeout: 45000 });
     await p.waitForTimeout(3500);
+    // close cookie and consent banners so the screenshot shows the design
+    for (const re of [/^(accept|accept all|allow all|agree|i agree|got it|ok|okay|continue|accept cookies|accept all cookies)$/i]) {
+      for (const el of await p.getByRole('button', { name: re }).all().catch(() => [])) await el.click({ timeout: 1500 }).catch(() => {});
+    }
+    await p.waitForTimeout(800);
     await p.screenshot({ path: `${out}/site-${i + 1}.jpg`, type: 'jpeg', quality: 60 });
     site.shot = `site-${i + 1}.jpg`;
     site.rea = rea(url);
