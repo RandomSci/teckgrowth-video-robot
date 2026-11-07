@@ -8,7 +8,7 @@ on:
       job:
         description: 'Job JSON, see README'
         required: true
-        default: '{"id":"manual-test","title":"Create anything you can imagine","cta":"teckgrowth.com","scenes":[{"url":"https://teckgrowth.com/","caption":"Type one sentence"},{"url":"https://teckgrowth.com/library","caption":"Or start from a finished app","scroll":600}]}'
+        default: '{"id":"manual-test","title":"Create anything you can imagine","subtitle":"Real, working web apps from one sentence","cta":"teckgrowth.com","scenes":[{"url":"https://teckgrowth.com/","caption":"Describe it in one sentence","steps":[{"selector":"textarea","type":"A booking site for my mobile car wash in Austin"},{"wait":1500}],"seconds":8},{"url":"https://teckgrowth.com/library","caption":"Or start from a finished app","scroll":700},{"url":"https://teckgrowth.com/demos/product-configurator/","caption":"Real apps, live in minutes","device":"phone"}]}'
   repository_dispatch:
     types: [render]
 
@@ -25,7 +25,8 @@ jobs:
     timeout-minutes: 25
     env:
       JOB: ${{ github.event_name == 'repository_dispatch' && toJSON(github.event.client_payload.job) || inputs.job }}
-      RECORDER_TOKEN: ${{ secrets.RECORDER_TOKEN }}
+      ROBOT_TOKEN: ${{ secrets.ROBOT_TOKEN }}
+      ATLAS_API_KEY: ${{ secrets.ATLAS_API_KEY }}
       TG_CALLBACK_TOKEN: ${{ secrets.TG_CALLBACK_TOKEN }}
     steps:
       - uses: actions/checkout@v4

@@ -1,6 +1,6 @@
 # TeckGrowth video robot
 
-Makes short vertical videos (1080 by 1920, H.264) of teckgrowth.com on GitHub's free runner. It opens the pages a job lists in a real Chrome, takes the screenshots, animates them with Remotion (hook, a slow push in per screen with a caption, end card), and publishes the MP4 as a release in this repo, so it has a public link Buffer can post.
+Makes videos of teckgrowth.com, landscape 1920 by 1080 by default (YouTube, X, ads), vertical 1080 by 1920 with "format": "vertical", on GitHub's free runner. It uses the site like a real person in a real Chrome (desktop 1440 by 900 by default, or phone), records the steps it is told to do as video clips or takes stills, and puts them in a clean browser or phone frame with Remotion (hook, one scene per page with a caption, end card), and publishes the MP4 as a release in this repo, so it has a public link Buffer can post.
 
 Nothing here is secret. Keys live in the repo's Actions secrets, never in files or logs.
 
@@ -21,10 +21,13 @@ Nothing here is secret. Keys live in the repo's Actions secrets, never in files 
   ]
 }
 ```
-Per scene, url, caption, scroll (pixels), width and height (default 1080 by 1920), wait_ms (default 3500), dark (default true).
+Top level, id, title, subtitle, cta, format (landscape or vertical).
+Per scene, url, caption, device (desktop, tablet or phone), seconds, wait_ms (default 3000), dark (default true), scroll (pixels, for a still), steps (recorded as a clip), each step one of
+{ "selector": "textarea", "type": "words to type" }, { "text": "Use this idea" } (click), { "role": "button", "name": "Build it" } (click), { "scroll": 600 }, { "wait": 1500 }.
 
 ## Secrets (Settings, Secrets and variables, Actions)
-- RECORDER_TOKEN, optional, a view only TeckGrowth recorder token so admin pages can be filmed. It can never change anything.
+- ROBOT_TOKEN, the robot's own TeckGrowth account (made by admin), signs it in like a real user so it can make its own projects and film them. Never Selwyn's login.
+- ATLAS_API_KEY, optional, Atlas Cloud for short AI video clips in a scene (next).
 - TG_CALLBACK_TOKEN, optional, lets the run tell TeckGrowth admin the video link when it is done.
 
 ## Run it locally
