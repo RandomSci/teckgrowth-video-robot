@@ -33,12 +33,19 @@ async function cards(path, words) {
   const out = [];
   for (const pg of [1, 2]) {
     await p.goto('https://www.awwwards.com/' + path + (pg > 1 ? '?page=' + pg : ''), { waitUntil: 'domcontentloaded', timeout: 45000 }).catch(() => {});
-    await p.waitForTimeout(2500);
-    const list = await p.evaluate(() => [...document.querySelectorAll('[data-collectable-model-value]')].map((el) => {
+    let list = [];
+    for (let t = 0; t < 4; t++) {
+      await p.waitForTimeout(3000);
+      try { await p.waitForLoadState('networkidle', { timeout: 15000 }); } catch {}
+      try { list = await p.evaluate(() => [...document.querySelectorAll('[data-collectable-model-value]')].map((el) => {
       let m = {}; try { m = JSON.parse(el.getAttribute('data-collectable-model-value')); } catch {}
       const a = el.querySelector('a[href^="/sites/"]') || el.parentElement?.querySelector('a[href^="/sites/"]') || el.closest('li,article,div')?.querySelector('a[href^="/sites/"]');
       return { title: m.title, tags: m.tags || [], detail: a ? a.getAttribute('href') : null };
-    }).filter((x) => x.title && x.detail));
+    }).filter((x) => x.title && x.detail)); } catch (e) { console.log('  retry', t, e.message.slice(0, 80)); continue; }
+      if (list.length) break;
+      console.log('  no cards yet, title', await p.title().catch(() => '?'));
+    }
+    if (!list.length) await p.screenshot({ path: 'refs/shots/listing-' + path.replace(/\W+/g, '-') + '.jpg', type: 'jpeg', quality: 50 }).catch(() => {});
     out.push(...list);
   }
   await p.close();
