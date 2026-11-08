@@ -38,8 +38,15 @@ jobs:
         # a meeting only needs the Chrome that is already on the runner and four Python packages, so it starts in seconds
         if: github.event.client_payload.kind == 'meet'
         run: pip install -q websockets playwright google-auth requests
+      - name: Tools for a sign in
+        # a virtual screen, a VNC server, noVNC for the phone and a one time Cloudflare tunnel
+        if: github.event.client_payload.kind == 'login'
+        run: |
+          pip install -q playwright
+          sudo apt-get install -y -qq xvfb x11vnc novnc websockify > /dev/null
+          curl -sSL -o /tmp/cf.deb https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb && sudo dpkg -i /tmp/cf.deb > /dev/null
       - name: Tools for a task
-        if: github.event.client_payload.kind != 'meet'
+        if: github.event.client_payload.kind != 'meet' && github.event.client_payload.kind != 'login'
         run: |
           npm install --no-audit --no-fund > /dev/null
           npx playwright install --with-deps chromium > /dev/null

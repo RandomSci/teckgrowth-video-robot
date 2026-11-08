@@ -182,6 +182,72 @@ async function task(job, K) {
   return send({ status: 'done', text: 'Ran out of time before finishing. Files so far are attached.', files: fs.readdirSync(OUT).map((f) => path.join(OUT, f)) });
 }
 
+// ---------- sign in Jasmine's Google account (Selwyn 11.09)
+// A normal Chrome on a virtual screen, shown on Selwyn's phone through noVNC and a one time Cloudflare tunnel with a
+// random password. He signs in himself, this machine sees the Google cookies, saves the login to TeckGrowth (stored
+// encrypted, never in this public repo or its logs) and closes everything. Nothing here types a password.
+async function login(task) {
+  const sh = (cmd, args, opts = {}) => spawn(cmd, args, { stdio: 'ignore', detached: false, ...opts });
+  const pw = [...crypto.getRandomValues(new Uint8Array(9))].map((b) => 'abcdefghjkmnpqrstuvwxyz23456789'[b % 31]).join('').slice(0, 8);   // VNC passwords are 8 characters
+  const env = { ...process.env, DISPLAY: ':99' };
+  sh('Xvfb', [':99', '-screen', '0', '1280x860x24']);
+  await new Promise((s) => setTimeout(s, 1500));
+  const prof = path.join(WORK, 'chrome');
+  sh('google-chrome', [`--user-data-dir=${prof}`, '--no-first-run', '--no-default-browser-check', '--remote-debugging-port=9222', '--window-position=0,0', '--window-size=1280,860', '--lang=en-US',
+    'https://accounts.google.com/ServiceLogin?continue=https%3A%2F%2Fmeet.google.com%2F'], { env });
+  spawnSync('x11vnc', ['-storepasswd', pw, path.join(WORK, 'vncpass')]);
+  sh('x11vnc', ['-display', ':99', '-forever', '-shared', '-rfbport', '5900', '-rfbauth', path.join(WORK, 'vncpass'), '-localhost', '-quiet']);
+  sh('websockify', ['--web', '/usr/share/novnc', '6080', 'localhost:5900']);
+  const cf = spawn('cloudflared', ['tunnel', '--no-autoupdate', '--url', 'http://localhost:6080'], { stdio: ['ignore', 'pipe', 'pipe'] });
+  const tunnel = await new Promise((res) => {
+    const t = setTimeout(() => res(null), 60000);
+    const look = (b) => { const m = /https:\/\/[a-z0-9-]+\.trycloudflare\.com/.exec(String(b)); if (m) { clearTimeout(t); res(m[0]); } };
+    cf.stdout.on('data', look); cf.stderr.on('data', look);
+  });
+  if (!tunnel) return send({ status: 'failed', error: 'Could not open the sign in link', text: '', files: [] });
+  const link = `${tunnel}/vnc.html?autoconnect=1&resize=scale&password=${pw}`;
+  await fetch(TG_URL, { method: 'POST', headers: { authorization: `Bearer ${TG_CB}`, 'content-type': 'application/json' }, body: JSON.stringify({ id: TG_ID, status: 'running', login_url: link, text: `Open this link and sign in to ${task.account || 'the robot Google account'}, ${link}` }) }).catch(() => {});
+  log('sign in link sent');
+  // wait for the Google login, read through Chrome's debugging port, up to the job's minutes
+  const py = `
+import asyncio, json, sys
+from playwright.async_api import async_playwright
+async def main():
+    async with async_playwright() as pw:
+        b = await pw.chromium.connect_over_cdp('http://127.0.0.1:9222')
+        ctx = b.contexts[0]
+        names = {c['name'] for c in await ctx.cookies('https://accounts.google.com') if c['domain'].endswith('google.com')}
+        if not {'SID', '__Secure-1PSID'} <= names:
+            print('{}'); return
+        p = await ctx.new_page()
+        await p.goto('https://meet.google.com/landing', timeout=60000)
+        await asyncio.sleep(4)
+        if 'accounts.google.com' in p.url:
+            await p.close(); print('{}'); return
+        await p.close()
+        print(json.dumps(await ctx.storage_state()))
+asyncio.run(main())
+`;
+  const until = Date.now() + (task.minutes || 20) * 60000;
+  while (Date.now() < until) {
+    await new Promise((s) => setTimeout(s, 6000));
+    const r = spawnSync('python', ['-c', py], { encoding: 'utf8', maxBuffer: 20e6 });
+    let st = null; try { st = JSON.parse((r.stdout || '').trim().split('\n').pop() || '{}'); } catch {}
+    if (st && Array.isArray(st.cookies) && st.cookies.length) {
+      log('signed in, saving');
+      for (let i = 0; i < 3; i++) {
+        const ok = await fetch(TG_URL, { method: 'POST', headers: { authorization: `Bearer ${TG_CB}`, 'content-type': 'application/json' }, body: JSON.stringify({ id: TG_ID, status: 'done', google_state: JSON.stringify(st), text: 'Signed in. Jasmine can join meetings now.', run: process.env.GITHUB_RUN_ID, files: [] }) }).then((x) => x.ok).catch(() => false);
+        if (ok) { cf.kill(); return; }
+        await new Promise((s) => setTimeout(s, 4000));
+      }
+      cf.kill();
+      return log('could not save the login');
+    }
+  }
+  cf.kill();
+  return send({ status: 'failed', error: 'Nobody signed in before the link expired', text: 'The sign in link expired. Ask again for a new one.', files: [] });
+}
+
 // ---------- start
 const r = await fetch(`${TG_URL}/keys?id=${encodeURIComponent(TG_ID)}`, { headers: { authorization: `Bearer ${TG_CB}` } });
 if (!r.ok) { log('could not get the job', r.status); process.exit(1); }
@@ -200,7 +266,7 @@ for (const f of K.task.files || []) {
   log('file ready');
 }
 try {
-  if (K.task.kind === 'meet') await meet(K.task, K); else await task(K.task, K);
+  if (K.task.kind === 'meet') await meet(K.task, K); else if (K.task.kind === 'login') await login(K.task); else await task(K.task, K);
 } catch (e) {
   log('failed');
   await send({ status: 'failed', error: String(e.message || e).replace(/sk-[A-Za-z0-9_-]+/g, 'sk-…').slice(0, 300), text: '', files: [] });
