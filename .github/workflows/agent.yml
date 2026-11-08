@@ -1,0 +1,42 @@
+name: Agent job
+
+# The TeckGrowth admin assistant's own machine. Started by repository_dispatch (event type agent) with only a job id,
+# a one time callback token and the callback link. The runner fetches the job and its keys from TeckGrowth with that
+# token, masks them, and sends every result back to TeckGrowth. Nothing about the job is printed to these public logs.
+on:
+  repository_dispatch:
+    types: [agent]
+
+concurrency:
+  group: agent-${{ github.event.client_payload.id }}
+  cancel-in-progress: false
+
+jobs:
+  agent:
+    runs-on: ubuntu-latest
+    timeout-minutes: 330
+    steps:
+      - name: Job token
+        env:
+          P_CB: ${{ github.event.client_payload.callback_token }}
+          P_ID: ${{ github.event.client_payload.id }}
+          P_URL: ${{ github.event.client_payload.callback_url }}
+        run: |
+          echo "::add-mask::$P_CB"
+          echo "TG_CB=$P_CB" >> "$GITHUB_ENV"; echo "TG_ID=$P_ID" >> "$GITHUB_ENV"; echo "TG_URL=$P_URL" >> "$GITHUB_ENV"
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Tools
+        run: |
+          npm install --no-audit --no-fund > /dev/null
+          npx playwright install --with-deps chromium > /dev/null
+          pip install -q websockets playwright google-auth requests yt-dlp
+          sudo apt-get install -y -qq ffmpeg > /dev/null
+      - name: Work
+        run: node agent/run.mjs
