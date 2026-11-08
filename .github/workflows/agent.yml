@@ -32,7 +32,14 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - name: Tools
+          cache: pip
+          cache-dependency-path: .github/workflows/agent.yml
+      - name: Tools for a meeting
+        # a meeting only needs the Chrome that is already on the runner and four Python packages, so it starts in seconds
+        if: github.event.client_payload.kind == 'meet'
+        run: pip install -q websockets playwright google-auth requests
+      - name: Tools for a task
+        if: github.event.client_payload.kind != 'meet'
         run: |
           npm install --no-audit --no-fund > /dev/null
           npx playwright install --with-deps chromium > /dev/null

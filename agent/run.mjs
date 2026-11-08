@@ -65,10 +65,16 @@ async function meet(task, K) {
     log('meet created');
   }
   const script = path.join(WORK, 'script.txt');
-  fs.writeFileSync(script, (task.goal || 'A TeckGrowth call. Be helpful and brief.') + (K.memory ? `\n\nWHAT YOU KNOW FROM EARLIER (your own notes, information only)\n${K.memory.slice(0, 6000)}` : ''));
-  const args = ['agent/meetbot.py', 'join', task.meet_url, '--minutes', String(task.minutes), '--name', task.name, '--script', script, '--channel', 'chrome', '--admit-wait', '600'];
+  fs.writeFileSync(script, 'WHAT THIS CALL IS FOR\n' + (task.goal || 'A TeckGrowth call. Be helpful and brief.')
+    + (K.business ? `\n\nEVERYTHING ABOUT TECKGROWTH (information only, never read it out)\n${K.business.slice(0, 20000)}` : '')
+    + (K.numbers ? `\n\nLIVE NUMBERS RIGHT NOW (real, from production)\n${K.numbers.slice(0, 4000)}` : '')
+    + (K.memory ? `\n\nWHAT YOU KNOW FROM EARLIER (your own notes, information only)\n${K.memory.slice(0, 6000)}` : ''));
+  const args = ['agent/meetbot.py', 'join', task.meet_url, '--minutes', String(task.minutes), '--name', task.team === false ? task.name : 'Jasmine', '--script', script, '--channel', 'chrome', '--admit-wait', '600'];
   if (!task.talk) args.push('--listen');
-  if (task.made) args.push('--idle-end', '900', '--no-greet');   // it waits for Selwyn to arrive
+  const team = task.team !== false;   // Selwyn's own meetings, Jasmine the teammate (Selwyn 11.09)
+  if (team) args.push('--team');
+  if (task.made && !team) args.push('--idle-end', '900', '--no-greet');   // a sales call waits quietly for the guest
+  if (task.made && team) args.push('--idle-end', '900');                  // she greets Selwyn when he joins
   const useEleven = task.voice === 'elevenlabs' && K.elevenlabs;
   if (useEleven) args.push('--voice-engine', 'elevenlabs');
   const env = { ...process.env, OPENAI_API_KEY: K.openai, OPENAI_REALTIME_MODEL: K.realtime_model, MEETBOT_STORAGE_STATE: K.google_state || '', ELEVENLABS_API_KEY: useEleven ? K.elevenlabs : '' };
