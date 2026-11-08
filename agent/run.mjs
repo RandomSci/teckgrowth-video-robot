@@ -25,6 +25,20 @@ async function send(body) {
   }
 }
 
+// one line per step for Selwyn's live view in the chat, images and screenshots it made go with it (Selwyn 11.09)
+function progress(name, a, out) {
+  const brief = name === 'shell' ? `Ran ${String(a.cmd || a.command || '').split('\n')[0].slice(0, 120)}`
+    : name === 'browser' ? `Browser ${a.action || ''} ${a.url || a.selector || ''}`.trim()
+    : name === 'make_image' ? `Made an image, ${String(a.prompt || '').slice(0, 100)}`
+    : `${name.replace(/_/g, ' ')} ${Object.values(a || {}).filter((v) => typeof v === 'string').join(' ').slice(0, 100)}`.trim();
+  const files = [];
+  const f = typeof out === 'string' && /\.(png|jpe?g|webp|gif)$/i.test(out) && fs.existsSync(out) ? out : null;
+  if (f && fs.statSync(f).size < 3e6) files.push({ name: path.basename(f), data: fs.readFileSync(f).toString('base64') });
+  const bad = typeof out === 'string' && /^error /.test(out);
+  return fetch(TG_URL, { method: 'POST', headers: { authorization: `Bearer ${TG_CB}`, 'content-type': 'application/json' },
+    body: JSON.stringify({ id: TG_ID, status: 'running', step: (bad ? 'Failed, ' : '') + brief.replace(/sk-[A-Za-z0-9_-]+/g, 'sk-…'), files }) }).catch(() => {});
+}
+
 async function ai(key, model, input, tools) {
   const r = await fetch('https://api.openai.com/v1/responses', { method: 'POST', headers: { authorization: `Bearer ${key}`, 'content-type': 'application/json' },
     body: JSON.stringify({ model, input, ...(tools ? { tools } : {}), store: false }) });
@@ -178,6 +192,7 @@ async function task(job, K) {
       log('step', step, c.name);
       if (c.name === 'finish') return send({ status: 'done', text: a.report, remember: a.remember || '', files: (a.files || []).map((f) => path.resolve(WORK, f)) });
       let out; try { out = await run[c.name](a); } catch (e) { out = 'error ' + String(e.message || e).slice(0, 500); }
+      progress(c.name, a, out);
       input.push({ type: 'function_call_output', call_id: c.call_id, output: String(out) });
     }
   }
