@@ -103,8 +103,9 @@ class Bot:
     def __init__(self, a):
         self.a = a
         self.model = os.environ.get('OPENAI_REALTIME_MODEL', 'gpt-realtime-2.1')
-        calls = HERE.parent.parent / 'playbook' / 'calls'
-        self.script = '\n\n'.join((calls / f).read_text() for f in ('guardrails.md', 'facts.md', 'faq.md', 'objections.md', 'meet_sales.md'))
+        calls = HERE / 'playbook' / 'calls'
+        if not calls.exists(): calls = HERE.parent.parent / 'playbook' / 'calls'
+        self.script = '\n\n'.join((calls / f).read_text() for f in ('guardrails.md', 'facts.md', 'faq.md', 'objections.md', 'meet_sales.md') if (calls / f).exists())
         if a.script:
             self.script += '\n\n' + Path(a.script).read_text()
         if getattr(a, 'brief', None):
@@ -242,8 +243,10 @@ class Bot:
         self.ws = await websockets.connect(url, additional_headers={'Authorization': 'Bearer ' + os.environ['OPENAI_API_KEY']},
                                            max_size=None)
         log('instructions', len(PREAMBLE + self.script), 'chars, brief', 'yes' if 'WHO YOU ARE MEETING' in self.script else 'no')
+        self.eleven = os.environ.get('ELEVENLABS_API_KEY') if getattr(self.a, 'voice_engine', 'openai') == 'elevenlabs' else None
         await self.ws.send(json.dumps({'type': 'session.update', 'session': {
             'type': 'realtime',
+            **({'output_modalities': ['text']} if self.eleven else {}),
             'tools': TOOLS, 'tool_choice': 'auto',
             'instructions': (PREAMBLE.replace('say the call is transcribed so our team can follow up, with no audio recording', 'say the call is recorded so our team can follow up') if self.a.record else PREAMBLE) + '\n' + self.script,
             'audio': {
@@ -272,7 +275,14 @@ class Bot:
                     self.said = wave.open(str(self.run / 'said.wav'), 'wb')
                     self.said.setnchannels(1); self.said.setsampwidth(2); self.said.setframerate(24000)
                 if self.a.record: self.said.writeframes(base64.b64decode(ev['delta']))
+            elif t == 'response.output_text.done' and getattr(self, 'eleven', None):
+                said = ev.get('text', '').strip()
+                if said:
+                    self.line('BOT', said)
+                    self.spoke_in_response = True
+                    asyncio.create_task(self.el_say(said))
             elif t == 'input_audio_buffer.speech_started':
+                self.el_cut = time.time()
                 self.last_heard = time.time(); self.nudges = 0
                 await self.page.evaluate('() => window.__mb.stop()')
             elif t == 'input_audio_buffer.speech_stopped':
@@ -306,6 +316,40 @@ class Bot:
                 self.usage['text_out'] += outd.get('text_tokens', 0)
             elif t == 'error':
                 log('realtime error', json.dumps(ev.get('error'))[:300])
+
+    async def el_say(self, text):
+        """ElevenLabs voice, streamed as PCM 24 kHz into the same fake mic the OpenAI voice uses."""
+        import requests
+        start = time.time()
+        voice = os.environ.get('ELEVENLABS_VOICE_ID') or '21m00Tcm4TlvDq8ikWAM'
+        loop = asyncio.get_running_loop()
+        q = asyncio.Queue()
+        def pull():
+            try:
+                with requests.post(f'https://api.elevenlabs.io/v1/text-to-speech/{voice}/stream?output_format=pcm_24000&optimize_streaming_latency=3',
+                                   headers={'xi-api-key': self.eleven, 'content-type': 'application/json'},
+                                   json={'text': text, 'model_id': 'eleven_flash_v2_5'}, stream=True, timeout=60) as r:
+                    if r.status_code != 200:
+                        log('elevenlabs', r.status_code, r.text[:200]); return
+                    buf = b''
+                    for chunk in r.iter_content(4800):
+                        buf += chunk
+                        if len(buf) >= 9600:
+                            n = len(buf) - len(buf) % 2
+                            loop.call_soon_threadsafe(q.put_nowait, buf[:n]); buf = buf[n:]
+                    if len(buf) >= 2: loop.call_soon_threadsafe(q.put_nowait, buf[:len(buf) - len(buf) % 2])
+            finally:
+                loop.call_soon_threadsafe(q.put_nowait, None)
+        loop.run_in_executor(None, pull)
+        first = True
+        while True:
+            pcm = await q.get()
+            if pcm is None: break
+            if getattr(self, 'el_cut', 0) > start: continue   # someone talked over the bot, drop the rest
+            if first and self.first_delta_pending and self.stopped_at:
+                self.latencies.append(time.time() - self.stopped_at); self.first_delta_pending = False
+            first = False
+            await self.page.evaluate('a => window.__mb.play(a)', base64.b64encode(pcm).decode())
 
     async def tool(self, call_id, name, args):
         try:
@@ -750,6 +794,7 @@ def main():
     j.add_argument('--name', default='Jasmine from TeckGrowth')
     j.add_argument('--minutes', type=float, default=10)
     j.add_argument('--voice', default='marin')
+    j.add_argument('--voice-engine', default='openai', choices=['openai', 'elevenlabs'], help='elevenlabs speaks the replies with ELEVENLABS_API_KEY')
     j.add_argument('--silence-ms', type=int, default=600)
     j.add_argument('--vad-threshold', type=float, default=0.5, help='0 to 1, higher ignores more echo and noise but misses quiet speech')
     j.add_argument('--lang', default='en', help='language of the people in the call, for transcription')

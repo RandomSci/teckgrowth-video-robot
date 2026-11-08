@@ -4,3 +4,4 @@ public/shots/*
 !public/shots/.gitkeep
 agent/runs/
 work/
+agent/__pycache__/

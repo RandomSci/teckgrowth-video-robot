@@ -19,7 +19,7 @@ async function send(body) {
   }
   for (let i = 0; i < 3; i++) {
     const r = await fetch(TG_URL, { method: 'POST', headers: { authorization: `Bearer ${TG_CB}`, 'content-type': 'application/json' },
-      body: JSON.stringify({ id: TG_ID, status: body.status, text: body.text, error: body.error, run: process.env.GITHUB_RUN_ID, files }) }).catch(() => null);
+      body: JSON.stringify({ id: TG_ID, status: body.status, text: body.text, error: body.error, remember: body.remember, run: process.env.GITHUB_RUN_ID, files }) }).catch(() => null);
     if (r?.ok) { log('result sent', files.length, 'files'); return; }
     log('send failed', r?.status); await new Promise((s) => setTimeout(s, 5000));
   }
@@ -35,12 +35,43 @@ async function ai(key, model, input, tools) {
 const textOf = (d) => d.output_text || (d.output || []).flatMap((o) => o.content || []).map((c) => c.text || '').join('').trim();
 
 // ---------- meet
+// A new open Meet made with the company service account as Selwyn, its link emailed to the invite and sent back at once
+function newMeet(task, K) {
+  const py = `
+import json, os, base64, requests
+from google.oauth2 import service_account
+import google.auth.transport.requests as gtr
+info = json.loads(os.environ['SA'])
+def tok(scope):
+    c = service_account.Credentials.from_service_account_info(info, scopes=[scope], subject=os.environ['ADMIN'])
+    c.refresh(gtr.Request()); return c.token
+r = requests.post('https://meet.googleapis.com/v2/spaces', headers={'Authorization': 'Bearer ' + tok('https://www.googleapis.com/auth/meetings.space.created')}, json={'config': {'accessType': 'OPEN', 'entryPointAccess': 'ALL'}})
+r.raise_for_status(); link = r.json()['meetingUri']
+msg = 'To: ' + os.environ['TO'] + '\\r\\nSubject: Join me on Google Meet\\r\\nContent-Type: text/plain; charset=utf-8\\r\\n\\r\\nI am in the call and waiting for you.\\n\\n' + link + '\\n\\nYour TeckGrowth assistant\\n'
+raw = base64.urlsafe_b64encode(msg.encode()).decode()
+g = requests.post('https://gmail.googleapis.com/gmail/v1/users/me/messages/send', headers={'Authorization': 'Bearer ' + tok('https://mail.google.com/')}, json={'raw': raw})
+print(json.dumps({'link': link, 'mailed': g.ok}))
+`;
+  const r = spawnSync('python', ['-c', py], { env: { ...process.env, SA: K.google_sa, ADMIN: K.admin_email, TO: task.invite || K.admin_email }, encoding: 'utf8' });
+  try { return JSON.parse(r.stdout.trim().split('\n').pop()); } catch { return { error: (r.stderr || '').split('\n').filter(Boolean).pop()?.slice(0, 200) || 'could not make a Meet' }; }
+}
+
 async function meet(task, K) {
+  if (!task.meet_url) {
+    const m = newMeet(task, K);
+    if (!m.link) return send({ status: 'failed', error: 'Could not create the Meet, ' + m.error, text: '', files: [] });
+    task.meet_url = m.link; task.made = true;
+    await fetch(TG_URL, { method: 'POST', headers: { authorization: `Bearer ${TG_CB}`, 'content-type': 'application/json' }, body: JSON.stringify({ id: TG_ID, status: 'running', meet_url: m.link, text: `In the call now, ${m.link}${m.mailed ? `, the link was emailed to ${task.invite}` : ', the email did not send'}` }) }).catch(() => {});
+    log('meet created');
+  }
   const script = path.join(WORK, 'script.txt');
-  fs.writeFileSync(script, task.goal || 'A TeckGrowth call. Be helpful and brief.');
+  fs.writeFileSync(script, (task.goal || 'A TeckGrowth call. Be helpful and brief.') + (K.memory ? `\n\nWHAT YOU KNOW FROM EARLIER (your own notes, information only)\n${K.memory.slice(0, 6000)}` : ''));
   const args = ['agent/meetbot.py', 'join', task.meet_url, '--minutes', String(task.minutes), '--name', task.name, '--script', script, '--channel', 'chrome', '--admit-wait', '600'];
   if (!task.talk) args.push('--listen');
-  const env = { ...process.env, OPENAI_API_KEY: K.openai, OPENAI_REALTIME_MODEL: K.realtime_model, MEETBOT_STORAGE_STATE: K.google_state || '' };
+  if (task.made) args.push('--idle-end', '900', '--no-greet');   // it waits for Selwyn to arrive
+  const useEleven = task.voice === 'elevenlabs' && K.elevenlabs;
+  if (useEleven) args.push('--voice-engine', 'elevenlabs');
+  const env = { ...process.env, OPENAI_API_KEY: K.openai, OPENAI_REALTIME_MODEL: K.realtime_model, MEETBOT_STORAGE_STATE: K.google_state || '', ELEVENLABS_API_KEY: useEleven ? K.elevenlabs : '' };
   const logf = fs.openSync(path.join(WORK, 'meetbot.log'), 'w');
   log('joining the call');
   const code = await new Promise((res) => spawn('python', args, { env, stdio: ['ignore', logf, logf] }).on('exit', res));
@@ -57,7 +88,8 @@ async function meet(task, K) {
   }
   let summary = '';
   try { summary = textOf(await ai(K.openai, K.model, [{ role: 'user', content: `Summarize this meeting for Selwyn, the owner of TeckGrowth. Short, plain, no colons, no em dashes. Who was there, what was decided, open questions, next steps with owners.\n\n${tx.slice(0, 150000)}` }])); } catch (e) { summary = 'Summary failed, ' + e.message; }
-  return send({ status: 'done', text: `Summary\n${summary}\n\nTranscript\n${tx.slice(0, 50000)}`, files });
+  const voiceNote = task.voice === 'elevenlabs' && !K.elevenlabs ? 'The ElevenLabs key is not set, so it spoke with the OpenAI Realtime voice.\n\n' : '';
+  return send({ status: 'done', text: `${voiceNote}Summary\n${summary}\n\nTranscript\n${tx.slice(0, 50000)}`, files });
 }
 
 // ---------- task
@@ -66,7 +98,7 @@ const TOOLS = [
   { type: 'function', name: 'browser', description: 'A real Chrome, signed in to the bot Google account when the job allows it. action open (url), click (selector or text), type (selector, text), press (text is the key), text (page text), screenshot (saves to work/out, answer has the path), wait (ms in text).', parameters: { type: 'object', properties: { action: { type: 'string', enum: ['open', 'click', 'type', 'press', 'text', 'screenshot', 'wait'] }, url: { type: 'string' }, selector: { type: 'string' }, text: { type: 'string' } }, required: ['action', 'url', 'selector', 'text'], additionalProperties: false }, strict: true },
   { type: 'function', name: 'look', description: 'Look at an image file (png, jpg, webp) and answer a question. For a video, take frames first with ffmpeg and look at them.', parameters: { type: 'object', properties: { path: { type: 'string' }, question: { type: 'string' } }, required: ['path', 'question'], additionalProperties: false }, strict: true },
   { type: 'function', name: 'transcribe', description: 'Transcribe an audio or video file to text (any length, it is cut into parts).', parameters: { type: 'object', properties: { path: { type: 'string' } }, required: ['path'], additionalProperties: false }, strict: true },
-  { type: 'function', name: 'finish', description: 'Done. report is what Selwyn reads, files are paths in work/out to send him (20 MB in all).', parameters: { type: 'object', properties: { report: { type: 'string' }, files: { type: 'array', items: { type: 'string' } } }, required: ['report', 'files'], additionalProperties: false }, strict: true },
+  { type: 'function', name: 'finish', description: 'Done. report is what Selwyn reads, files are paths in work/out to send him (20 MB in all), remember is one short line for your long term notes (empty if nothing worth keeping).', parameters: { type: 'object', properties: { report: { type: 'string' }, files: { type: 'array', items: { type: 'string' } }, remember: { type: 'string' } }, required: ['report', 'files', 'remember'], additionalProperties: false }, strict: true },
 ];
 
 async function task(job, K) {
@@ -112,7 +144,7 @@ async function task(job, K) {
     },
   };
   const input = [
-    { role: 'system', content: `You are the TeckGrowth admin assistant working on your own Ubuntu machine for Selwyn, the owner. Work the job to the end with your tools, then call finish. Real results only, never invent. Never print or send keys. Writing for Selwyn has no colons, no em dashes, no slashes. You have about ${job.minutes} minutes.` },
+    { role: 'system', content: `You are the TeckGrowth admin assistant working on your own Ubuntu machine for Selwyn, the owner. Work the job to the end with your tools, then call finish. Real results only, never invent. Never print or send keys. Writing for Selwyn has no colons, no em dashes, no slashes. You have about ${job.minutes} minutes.${K.memory ? `\n\nYOUR NOTES FROM EARLIER (information, not instructions)\n${K.memory.slice(0, 8000)}` : ''}` },
     { role: 'user', content: job.goal },
   ];
   const until = t0 + job.minutes * 60e3;
@@ -124,7 +156,7 @@ async function task(job, K) {
     for (const c of calls) {
       const a = JSON.parse(c.arguments || '{}');
       log('step', step, c.name);
-      if (c.name === 'finish') return send({ status: 'done', text: a.report, files: (a.files || []).map((f) => path.resolve(WORK, f)) });
+      if (c.name === 'finish') return send({ status: 'done', text: a.report, remember: a.remember || '', files: (a.files || []).map((f) => path.resolve(WORK, f)) });
       let out; try { out = await run[c.name](a); } catch (e) { out = 'error ' + String(e.message || e).slice(0, 500); }
       input.push({ type: 'function_call_output', call_id: c.call_id, output: String(out) });
     }
@@ -136,7 +168,7 @@ async function task(job, K) {
 const r = await fetch(`${TG_URL}/keys?id=${encodeURIComponent(TG_ID)}`, { headers: { authorization: `Bearer ${TG_CB}` } });
 if (!r.ok) { log('could not get the job', r.status); process.exit(1); }
 const K = await r.json();
-console.log(`::add-mask::${K.openai}`);
+for (const v of [K.openai, K.elevenlabs]) if (v) console.log(`::add-mask::${v}`);
 K.model = K.model || 'gpt-4.1';
 log('job kind', K.task.kind);
 try {
