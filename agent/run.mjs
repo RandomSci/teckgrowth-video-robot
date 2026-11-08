@@ -95,6 +95,8 @@ async function meet(task, K) {
   let summary = '';
   try { summary = textOf(await ai(K.openai, K.model, [{ role: 'user', content: `Summarize this meeting for Selwyn, the owner of TeckGrowth. Short, plain, no colons, no em dashes. Who was there, what was decided, open questions, next steps with owners.\n\n${tx.slice(0, 150000)}` }])); } catch (e) { summary = 'Summary failed, ' + e.message; }
   const voiceNote = task.voice === 'elevenlabs' && !K.elevenlabs ? 'The ElevenLabs key is not set, so it spoke with the OpenAI Realtime voice.\n\n' : '';
+  const fresh = dir && fs.existsSync(path.join(dir, 'state.json')) ? fs.readFileSync(path.join(dir, 'state.json'), 'utf8') : null;
+  if (fresh) await fetch(TG_URL, { method: 'POST', headers: { authorization: `Bearer ${TG_CB}`, 'content-type': 'application/json' }, body: JSON.stringify({ id: TG_ID, status: 'running', google_state: fresh, text: 'Call ended, writing the summary' }) }).catch(() => {});
   return send({ status: 'done', text: `${voiceNote}Summary\n${summary}\n\nTranscript\n${tx.slice(0, 50000)}`, files });
 }
 

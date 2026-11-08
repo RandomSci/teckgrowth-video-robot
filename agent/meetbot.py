@@ -726,6 +726,14 @@ class Bot:
             await self.page.locator('button[aria-label*="eave call" i]').first.click(timeout=3000)
         except Exception:
             pass
+        # Google hands out fresh cookies while she is in a call, keep them so her login stays alive (Selwyn 11.09)
+        try:
+            st = await self.page.context.storage_state()
+            if any(c['name'] in ('SID', '__Secure-1PSID') for c in st.get('cookies', [])):
+                p = self.run / 'state.json'
+                p.write_text(json.dumps(st)); os.chmod(p, 0o600)
+        except Exception as e:
+            log('could not keep the fresh login', str(e)[:100])
 
     def report(self):
         mins = (time.time() - self.t_call) / 60
