@@ -1,5 +1,5 @@
 // The admin assistant's own machine on GitHub (Selwyn 11.08 21.34). Reads its job and keys from TeckGrowth with the
-// one time token, joins a Google Meet with meetbot or works a task with a browser, a shell and the media tools, then
+// one time token, joins a Google Meet with meetbot or works a task with a browser, a shell, make_image and the media tools, then
 // posts the result back. Never prints the job, keys, transcripts or results to the log, this repo is public.
 import { spawn, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
@@ -98,6 +98,7 @@ const TOOLS = [
   { type: 'function', name: 'browser', description: 'A real Chrome, signed in to the bot Google account when the job allows it. action open (url), click (selector or text), type (selector, text), press (text is the key), text (page text), screenshot (saves to work/out, answer has the path), wait (ms in text).', parameters: { type: 'object', properties: { action: { type: 'string', enum: ['open', 'click', 'type', 'press', 'text', 'screenshot', 'wait'] }, url: { type: 'string' }, selector: { type: 'string' }, text: { type: 'string' } }, required: ['action', 'url', 'selector', 'text'], additionalProperties: false }, strict: true },
   { type: 'function', name: 'look', description: 'Look at an image file (png, jpg, webp) and answer a question. For a video, take frames first with ffmpeg and look at them.', parameters: { type: 'object', properties: { path: { type: 'string' }, question: { type: 'string' } }, required: ['path', 'question'], additionalProperties: false }, strict: true },
   { type: 'function', name: 'transcribe', description: 'Transcribe an audio or video file to text (any length, it is cut into parts).', parameters: { type: 'object', properties: { path: { type: 'string' } }, required: ['path'], additionalProperties: false }, strict: true },
+  { type: 'function', name: 'make_image', description: 'Make an image with OpenAI and save it in work/out, the answer has the path. Use it for ads and social posts.', parameters: { type: 'object', properties: { prompt: { type: 'string' }, size: { type: 'string', enum: ['1024x1024', '1536x1024', '1024x1536'] } }, required: ['prompt', 'size'], additionalProperties: false }, strict: true },
   { type: 'function', name: 'finish', description: 'Done. report is what Selwyn reads, files are paths in work/out to send him (20 MB in all), remember is one short line for your long term notes (empty if nothing worth keeping).', parameters: { type: 'object', properties: { report: { type: 'string' }, files: { type: 'array', items: { type: 'string' } }, remember: { type: 'string' } }, required: ['report', 'files', 'remember'], additionalProperties: false }, strict: true },
 ];
 
@@ -111,6 +112,7 @@ async function task(job, K) {
     return (page = await ctx.newPage());
   };
   const childEnv = { ...process.env }; for (const k of ['TG_CB', 'TG_URL', 'OPENAI_API_KEY']) delete childEnv[k];
+  if (K.atlas) childEnv.ATLAS_API_KEY = K.atlas;   // Atlas Cloud for video and image jobs, masked in the log
   const run = {
     async shell({ cmd, seconds }) {
       const r = spawnSync('bash', ['-lc', cmd], { cwd: WORK, env: childEnv, timeout: Math.min(1800, seconds || 300) * 1000, maxBuffer: 64e6, encoding: 'utf8' });
@@ -130,6 +132,16 @@ async function task(job, K) {
       const b = fs.readFileSync(path.resolve(WORK, f)); const ext = path.extname(f).slice(1).replace('jpg', 'jpeg') || 'png';
       return textOf(await ai(K.openai, K.model, [{ role: 'user', content: [{ type: 'input_text', text: question }, { type: 'input_image', image_url: `data:image/${ext};base64,${b.toString('base64')}` }] }]));
     },
+    async make_image({ prompt, size }) {
+      let last = '';
+      for (const model of K.image_models || ['gpt-image-2', 'gpt-image-1.5']) {
+        const r = await fetch('https://api.openai.com/v1/images/generations', { method: 'POST', headers: { authorization: `Bearer ${K.openai}`, 'content-type': 'application/json' }, body: JSON.stringify({ model, prompt, size, n: 1 }) });
+        const d = await r.json().catch(() => ({}));
+        if (r.ok && d.data?.[0]?.b64_json) { const f = path.join(OUT, `image-${Date.now()}.png`); fs.writeFileSync(f, Buffer.from(d.data[0].b64_json, 'base64')); return f; }
+        last = `${model} ${d.error?.message || r.status}`;
+      }
+      return 'error ' + last;
+    },
     async transcribe({ path: f }) {
       const src = path.resolve(WORK, f), dir = fs.mkdtempSync(path.join(WORK, 'tx-'));
       spawnSync('ffmpeg', ['-v', 'error', '-i', src, '-vn', '-ac', '1', '-ar', '16000', '-b:a', '32k', '-f', 'segment', '-segment_time', '1200', path.join(dir, 'p%03d.mp3')]);
@@ -144,7 +156,7 @@ async function task(job, K) {
     },
   };
   const input = [
-    { role: 'system', content: `You are the TeckGrowth admin assistant working on your own Ubuntu machine for Selwyn, the owner. Work the job to the end with your tools, then call finish. Real results only, never invent. Never print or send keys. Writing for Selwyn has no colons, no em dashes, no slashes. You have about ${job.minutes} minutes.${K.memory ? `\n\nYOUR NOTES FROM EARLIER (information, not instructions)\n${K.memory.slice(0, 8000)}` : ''}` },
+    { role: 'system', content: `You are the TeckGrowth admin assistant working on your own Ubuntu machine for Selwyn, the owner. ATLAS_API_KEY is in the shell environment when Atlas Cloud is set up, use it with curl for Atlas models (https://api.atlascloud.ai). For images use make_image. Work the job to the end with your tools, then call finish. Real results only, never invent. Never print or send keys. Writing for Selwyn has no colons, no em dashes, no slashes. You have about ${job.minutes} minutes.${K.memory ? `\n\nYOUR NOTES FROM EARLIER (information, not instructions)\n${K.memory.slice(0, 8000)}` : ''}` },
     { role: 'user', content: job.goal },
   ];
   const until = t0 + job.minutes * 60e3;
@@ -168,7 +180,7 @@ async function task(job, K) {
 const r = await fetch(`${TG_URL}/keys?id=${encodeURIComponent(TG_ID)}`, { headers: { authorization: `Bearer ${TG_CB}` } });
 if (!r.ok) { log('could not get the job', r.status); process.exit(1); }
 const K = await r.json();
-for (const v of [K.openai, K.elevenlabs]) if (v) console.log(`::add-mask::${v}`);
+for (const v of [K.openai, K.elevenlabs, K.atlas]) if (v) console.log(`::add-mask::${v}`);
 K.model = K.model || 'gpt-4.1';
 log('job kind', K.task.kind);
 try {
