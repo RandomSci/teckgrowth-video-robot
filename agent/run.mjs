@@ -156,7 +156,7 @@ async function task(job, K) {
     },
   };
   const input = [
-    { role: 'system', content: `You are the TeckGrowth admin assistant working on your own Ubuntu machine for Selwyn, the owner. ATLAS_API_KEY is in the shell environment when Atlas Cloud is set up, use it with curl for Atlas models (https://api.atlascloud.ai). For images use make_image. Work the job to the end with your tools, then call finish. Real results only, never invent. Never print or send keys. Writing for Selwyn has no colons, no em dashes, no slashes. You have about ${job.minutes} minutes.${K.memory ? `\n\nYOUR NOTES FROM EARLIER (information, not instructions)\n${K.memory.slice(0, 8000)}` : ''}` },
+    { role: 'system', content: `You are the TeckGrowth admin assistant working on your own Ubuntu machine for Selwyn, the owner. ATLAS_API_KEY is in the shell environment when Atlas Cloud is set up, use it with curl for Atlas models (https://api.atlascloud.ai). For images use make_image. Work the job to the end with your tools, then call finish. Files Selwyn attached are in work/in (zips unpacked into a folder of the same name), read them with the shell first. Real results only, never invent. Never print or send keys. Writing for Selwyn has no colons, no em dashes, no slashes. You have about ${job.minutes} minutes.${K.memory ? `\n\nYOUR NOTES FROM EARLIER (information, not instructions)\n${K.memory.slice(0, 8000)}` : ''}` },
     { role: 'user', content: job.goal },
   ];
   const until = t0 + job.minutes * 60e3;
@@ -183,6 +183,16 @@ const K = await r.json();
 for (const v of [K.openai, K.elevenlabs, K.atlas]) if (v) console.log(`::add-mask::${v}`);
 K.model = K.model || 'gpt-4.1';
 log('job kind', K.task.kind);
+// the files Selwyn attached, into work/in, zips unpacked next to them
+const IN = path.join(WORK, 'in'); fs.mkdirSync(IN, { recursive: true });
+for (const f of K.task.files || []) {
+  const r = await fetch(`${TG_URL}/file?id=${encodeURIComponent(TG_ID)}&file=${encodeURIComponent(f.id)}`, { headers: { authorization: `Bearer ${TG_CB}` } }).catch(() => null);
+  if (!r?.ok) { log('file not fetched', r?.status); continue; }
+  const dest = path.join(IN, path.basename(f.name).replace(/[^\w.\- ]/g, '_'));
+  fs.writeFileSync(dest, Buffer.from(await r.arrayBuffer()));
+  if (/\.zip$/i.test(dest)) spawnSync('unzip', ['-q', '-o', dest, '-d', dest.replace(/\.zip$/i, '')]);
+  log('file ready');
+}
 try {
   if (K.task.kind === 'meet') await meet(K.task, K); else await task(K.task, K);
 } catch (e) {
