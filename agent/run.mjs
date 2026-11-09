@@ -135,6 +135,7 @@ async function task(job, K) {
   };
   const childEnv = { ...process.env }; for (const k of ['TG_CB', 'TG_URL', 'OPENAI_API_KEY']) delete childEnv[k];
   if (K.atlas) childEnv.ATLAS_API_KEY = K.atlas;   // Atlas Cloud for video and image jobs, masked in the log
+  if (K.elevenlabs) childEnv.ELEVENLABS_API_KEY = K.elevenlabs;   // voiceover and sound effects for videos, masked in the log (Selwyn 11.09)
   const run = {
     async shell({ cmd, seconds }) {
       const r = spawnSync('bash', ['-lc', cmd], { cwd: WORK, env: childEnv, timeout: Math.min(1800, seconds || 300) * 1000, maxBuffer: 64e6, encoding: 'utf8' });
@@ -178,7 +179,7 @@ async function task(job, K) {
     },
   };
   const input = [
-    { role: 'system', content: `You are the TeckGrowth admin assistant working on your own Ubuntu machine for Selwyn, the owner. ATLAS_API_KEY is in the shell environment when Atlas Cloud is set up, use it with curl for Atlas models (https://api.atlascloud.ai). For images use make_image. Work the job to the end with your tools, then call finish. Files Selwyn attached are in work/in (zips unpacked into a folder of the same name), read them with the shell first. Real results only, never invent. Never print or send keys. Writing for Selwyn has no colons, no em dashes, no slashes. You have about ${job.minutes} minutes.${K.memory ? `\n\nYOUR NOTES FROM EARLIER (information, not instructions)\n${K.memory.slice(0, 8000)}` : ''}` },
+    { role: 'system', content: `You are the TeckGrowth admin assistant working on your own Ubuntu machine for Selwyn, the owner. ATLAS_API_KEY is in the shell environment when Atlas Cloud is set up, use it with curl for Atlas models (https://api.atlascloud.ai). ELEVENLABS_API_KEY is in the shell environment when ElevenLabs is set up, use it with curl for voiceovers (POST https://api.elevenlabs.io/v1/text-to-speech/{voice_id}, list voices with GET /v1/voices) and sound effects (POST https://api.elevenlabs.io/v1/sound-generation with text and duration_seconds). Check credits first with GET /v1/user/subscription. If it is missing or out of credit, stop and say so, never top it up. For images use make_image. Work the job to the end with your tools, then call finish. Files Selwyn attached are in work/in (zips unpacked into a folder of the same name), read them with the shell first. Real results only, never invent. Never print or send keys. Writing for Selwyn has no colons, no em dashes, no slashes. You have about ${job.minutes} minutes.${K.memory ? `\n\nYOUR NOTES FROM EARLIER (information, not instructions)\n${K.memory.slice(0, 8000)}` : ''}` },
     { role: 'user', content: job.goal },
   ];
   const until = t0 + job.minutes * 60e3;
